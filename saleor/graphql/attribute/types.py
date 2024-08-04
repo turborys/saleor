@@ -52,7 +52,9 @@ from .utils import AttributeAssignmentMixin
 
 class AttributeValue(ModelObjectType[models.AttributeValue]):
     id = graphene.GlobalID(required=True, description="The ID of the attribute value.")
-    name = graphene.String(description=AttributeValueDescriptions.NAME)
+    name = graphene.String(required=False, description=AttributeValueDescriptions.NAME)
+    additional_fields = JSONString(required=False, description=AttributeValueDescriptions.ADDITIONAL_FIELD)
+
     slug = graphene.String(description=AttributeValueDescriptions.SLUG)
     value = graphene.String(description=AttributeValueDescriptions.VALUE)
     translation = TranslationField(

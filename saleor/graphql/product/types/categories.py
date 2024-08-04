@@ -215,6 +215,12 @@ class Category(ModelObjectType[models.Category]):
     def __resolve_references(roots: list["Category"], _info):
         return resolve_federation_references(Category, roots, models.Category.objects)
 
+class CategoryUpdateInput(graphene.InputObjectType):
+    slug = graphene.String(required=True, description="The slug of the category.")
+    name = graphene.String(description="Name of the category.")
+    description = JSONString(description="Description of the category." + RICH_CONTENT)
+    parent_slug = graphene.String(description="Parent category slug.")
+
 
 class CategoryCountableConnection(CountableConnection):
     class Meta:

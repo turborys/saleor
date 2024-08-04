@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Union
+from typing import Union, List, Dict
 
 import graphene
 from django.core.exceptions import ValidationError
@@ -10,7 +10,7 @@ from text_unidecode import unidecode
 from ....attribute import ATTRIBUTE_PROPERTIES_CONFIGURATION, AttributeInputType, models
 from ....attribute.error_codes import AttributeBulkCreateErrorCode
 from ....core.tracing import traced_atomic_transaction
-from ....core.utils import prepare_unique_slug
+from ....core.utils import prepare_unique_slug, generate_unique_slug
 from ....permission.enums import PageTypePermissions, ProductTypePermissions
 from ....webhook.event_types import WebhookEventAsyncType
 from ...core import ResolveInfo
@@ -425,8 +425,7 @@ class AttributeBulkCreate(BaseMutation):
 
     @classmethod
     def _generate_slug(cls, cleaned_input, existing_slugs):
-        name = cleaned_input.get("name")
-        slug = slugify(unidecode(name))
+        slug = cleaned_input.get("slug")
 
         unique_slug = prepare_unique_slug(slug, existing_slugs)
         existing_slugs.add(unique_slug)
@@ -494,16 +493,31 @@ class AttributeBulkCreate(BaseMutation):
     def create_values(
         cls,
         attribute: models.Attribute,
-        values_data: list[AttributeValueCreateInput],
-        values: list[models.AttributeValue],
+        values_data: List[AttributeValueCreateInput],
+        values: List[models.AttributeValue],
         attr_index: int,
-        index_error_map: dict[int, list[AttributeBulkCreateError]],
+        index_error_map: Dict[int, List[AttributeBulkCreateError]],
     ):
         for value_index, value_data in enumerate(values_data):
             value = models.AttributeValue(attribute=attribute)
 
             try:
                 value = cls.construct_instance(value, value_data)
+
+                name = value_data.get("name", "")
+                ref = value_data.get("additional_fields", {}).get("ref")
+                value_field = value_data.get("additional_fields", {}).get("value")
+                code = value_data.get("additional_fields", {}).get("code")
+
+                value.slug = generate_unique_slug(
+                    value,
+                    name,
+                    ref=ref,
+                    value=value_field,
+                    code=code,
+                    additional_search_lookup={"attribute_id": attribute.id},
+                )
+
                 value.full_clean(exclude=["attribute", "slug"])
                 values.append(value)
             except ValidationError as exc:

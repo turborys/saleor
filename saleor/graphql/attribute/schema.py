@@ -17,6 +17,7 @@ from .bulk_mutations import AttributeBulkDelete, AttributeValueBulkDelete
 from .filters import AttributeFilterInput, AttributeWhereInput, filter_attribute_search
 from .mutations import (
     AttributeBulkCreate,
+    AttributeBulkCreateOrUpdate,
     AttributeBulkUpdate,
     AttributeCreate,
     AttributeDelete,
@@ -28,7 +29,7 @@ from .mutations import (
 )
 from .resolvers import resolve_attributes
 from .sorters import AttributeSortingInput
-from .types import Attribute, AttributeCountableConnection
+from .types import AttributeValue, Attribute, AttributeCountableConnection
 
 
 class AttributeQueries(graphene.ObjectType):
@@ -59,6 +60,14 @@ class AttributeQueries(graphene.ObjectType):
         doc_category=DOC_CATEGORY_ATTRIBUTES,
     )
 
+    attributeValue = BaseField(
+        AttributeValue,
+        id=graphene.Argument(graphene.ID, description="ID of the attribute value."),
+        slug=graphene.Argument(graphene.String, description="Slug of the attribute value."),
+        description="Look up an attribute value by ID or slug.",
+        doc_category=DOC_CATEGORY_ATTRIBUTES,
+    )
+
     def resolve_attributes(self, info: ResolveInfo, *, search=None, **kwargs):
         qs = resolve_attributes(info)
         qs = filter_connection_queryset(qs, kwargs, info.context)
@@ -73,6 +82,13 @@ class AttributeQueries(graphene.ObjectType):
             info, models.Attribute, id, slug, external_reference
         )
 
+    def resolve_attributeValue(
+        self, info: ResolveInfo, *, id=None, slug=None, external_reference=None
+    ):
+        return resolve_by_global_id_slug_or_ext_ref(
+            info, models.AttributeValue, id, slug, external_reference
+        )
+
 
 class AttributeMutations(graphene.ObjectType):
     # attribute mutations
@@ -80,6 +96,7 @@ class AttributeMutations(graphene.ObjectType):
     attribute_delete = AttributeDelete.Field()
     attribute_update = AttributeUpdate.Field()
     attribute_bulk_create = AttributeBulkCreate.Field()
+    attribute_bulk_create_or_update = AttributeBulkCreateOrUpdate.Field()
     attribute_bulk_update = AttributeBulkUpdate.Field()
     attribute_translate = AttributeTranslate.Field()
     attribute_bulk_translate = AttributeBulkTranslate.Field()

@@ -339,7 +339,8 @@ class AttributeValueManager(models.Manager):
 
 
 class AttributeValue(ModelWithExternalReference):
-    name = models.CharField(max_length=250)
+    name = models.CharField(max_length=250, blank=True, null=True, unique=False)
+    additional_fields = models.JSONField(default=dict, blank=True, unique=False)
     # keeps hex code color value in #RRGGBBAA format
     value = models.CharField(max_length=255, blank=True, default="")
     slug = models.SlugField(max_length=255, allow_unicode=True)
@@ -381,7 +382,7 @@ class AttributeValue(ModelWithExternalReference):
 
     class Meta:
         ordering = ("sort_order", "pk")
-        unique_together = ("slug", "attribute")
+        # unique_together = ("slug", "attribute")
         indexes = [
             GinIndex(
                 name="attribute_search_gin",

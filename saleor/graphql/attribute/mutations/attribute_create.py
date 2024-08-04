@@ -51,9 +51,9 @@ class AttributeValueInput(BaseInputObjectType):
     class Meta:
         doc_category = DOC_CATEGORY_ATTRIBUTES
 
-
 class AttributeValueCreateInput(AttributeValueInput):
-    name = graphene.String(required=True, description=AttributeValueDescriptions.NAME)
+    name = graphene.String(required=False, description=AttributeValueDescriptions.NAME)
+    additional_fields = JSONString(required=False, description=AttributeValueDescriptions.ADDITIONAL_FIELD)
 
     class Meta:
         doc_category = DOC_CATEGORY_ATTRIBUTES

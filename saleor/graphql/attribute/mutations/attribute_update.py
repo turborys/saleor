@@ -11,6 +11,7 @@ from ...core.doc_category import DOC_CATEGORY_ATTRIBUTES
 from ...core.enums import MeasurementUnitsEnum
 from ...core.mutations import ModelWithExtRefMutation
 from ...core.types import AttributeError, BaseInputObjectType, NonNullList
+from ...core.fields import JSONString
 from ...core.utils import WebhookEventInfo
 from ...plugins.dataloaders import get_plugin_manager_promise
 from ..descriptions import AttributeDescriptions, AttributeValueDescriptions
@@ -21,6 +22,7 @@ from .mixins import AttributeMixin
 
 class AttributeValueUpdateInput(AttributeValueInput):
     name = graphene.String(required=False, description=AttributeValueDescriptions.NAME)
+    additional_fields = JSONString(required=False, description=AttributeValueDescriptions.ADDITIONAL_FIELD)
 
     class Meta:
         doc_category = DOC_CATEGORY_ATTRIBUTES

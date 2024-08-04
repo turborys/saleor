@@ -1,4 +1,4 @@
-from .categories import Category, CategoryCountableConnection
+from .categories import Category, CategoryCountableConnection,  CategoryUpdateInput
 from .collections import Collection, CollectionCountableConnection
 from .digital_contents import (
     DigitalContent,
@@ -18,6 +18,7 @@ from .products import (
 __all__ = [
     "Category",
     "CategoryCountableConnection",
+    "CategoryUpdateInput",
     "Collection",
     "CollectionCountableConnection",
     "Product",

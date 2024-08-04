@@ -50,7 +50,33 @@ class AttributeMixin:
         for value_data in values_input:
             cls._validate_value(attribute, value_data, is_swatch_attr, slug_list)
 
-        cls.check_values_are_unique(values_input, attribute)
+    @classmethod
+    def generate_slug(cls, ref: str = None, value: str = None, name: str = None,
+                      code: str = None, slug_list: list = None) -> str:
+        """ Generate a slug from ref, value, name, and code ensuring it conforms to slug standards """
+        slug_base = ""
+
+        if ref and value:
+            slug_base = f"{ref}-{value}"
+        elif code and name:
+            slug_base = f"{name}-{code}"
+        elif name:
+            slug_base = name
+        else:
+            slug_base = ref or value or code or "default-slug"
+
+        slug = slugify(unidecode(slug_base))
+
+        if slug == "":
+            slug = "default-slug"  # Fallback to a default value if slug is empty
+
+        if slug_list is None:
+            slug_list = []
+
+        return prepare_unique_slug(slug, slug_list)
+
+
+
 
     @classmethod
     def _validate_value(
@@ -61,26 +87,46 @@ class AttributeMixin:
         slug_list: list,
     ):
         """Validate the new attribute value."""
-        value = value_data.get("name")
-        if value is None:
+        additional_fields = value_data.get("additional_fields", {})
+        ref = additional_fields.get("ref")
+        value = additional_fields.get("value")
+        code = additional_fields.get("code")
+        name = value_data.get("name")
+
+        if not additional_fields:
             raise ValidationError(
                 {
                     cls.ATTRIBUTE_VALUES_FIELD: ValidationError(
-                        "The name field is required.",
+                        "The additional_fields field is required.",
                         code=AttributeErrorCode.REQUIRED.value,
                     )
                 }
             )
 
+        # Ensure that either (ref and value) or (name and code) are provided
+        if (ref is None or value is None) and (name is None or code is None):
+            raise ValidationError(
+                {
+                    cls.ATTRIBUTE_VALUES_FIELD: ValidationError(
+                        "Either both (ref and value) or both (name and code) are required in additional_fields.",
+                        code=AttributeErrorCode.REQUIRED.value,
+                    )
+                }
+            )
+
+        # Generate a unique slug based on available fields
+        slug_value = cls.generate_slug(ref=ref, value=value, name=name, code=code,
+                                       slug_list=slug_list)
+        value_data["slug"] = slug_value
+        slug_list.append(slug_value)
+
+        # Validate the attribute value based on its type
         if is_swatch_attr:
             cls.validate_swatch_attr_value(value_data)
         else:
             cls.validate_non_swatch_attr_value(value_data)
 
-        slug_value = prepare_unique_slug(slugify(unidecode(value)), slug_list)
-        value_data["slug"] = slug_value
-        slug_list.append(slug_value)
-
+        # Create and validate the attribute value instance
         attribute_value = models.AttributeValue(**value_data, attribute=attribute)
         try:
             attribute_value.full_clean()
@@ -115,36 +161,6 @@ class AttributeMixin:
                     cls.ATTRIBUTE_VALUES_FIELD: ValidationError(
                         "Cannot specify both value and file for swatch attribute.",
                         code=AttributeErrorCode.INVALID.value,
-                    )
-                }
-            )
-
-    @classmethod
-    def check_values_are_unique(cls, values_input: dict, attribute: models.Attribute):
-        # Check values uniqueness in case of creating new attribute.
-        existing_names = attribute.values.values_list("name", flat=True)
-        existing_names = [name.lower().strip() for name in existing_names]
-        for value_data in values_input:
-            name = unidecode(value_data["name"]).lower().strip()
-            if name in existing_names:
-                msg = (
-                    f'Value {value_data["name"]} already exists within this attribute.'
-                )
-                raise ValidationError(
-                    {
-                        cls.ATTRIBUTE_VALUES_FIELD: ValidationError(
-                            msg, code=AttributeErrorCode.ALREADY_EXISTS.value
-                        )
-                    }
-                )
-
-        new_names = [value_data["name"].lower().strip() for value_data in values_input]
-        if len(set(new_names)) != len(new_names):
-            raise ValidationError(
-                {
-                    cls.ATTRIBUTE_VALUES_FIELD: ValidationError(
-                        "Provided values are not unique.",
-                        code=AttributeErrorCode.UNIQUE.value,
                     )
                 }
             )

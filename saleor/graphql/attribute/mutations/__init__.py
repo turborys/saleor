@@ -1,4 +1,5 @@
 from .attribute_bulk_create import AttributeBulkCreate
+from .attribute_bulk_create_or_update import AttributeBulkCreateOrUpdate
 from .attribute_bulk_update import AttributeBulkUpdate
 from .attribute_create import AttributeCreate
 from .attribute_delete import AttributeDelete
@@ -16,6 +17,7 @@ __all__ = [
     "AttributeCreate",
     "AttributeDelete",
     "AttributeBulkCreate",
+    "AttributeBulkCreateOrUpdate",
     "AttributeBulkUpdate",
     "AttributeReorderValues",
     "AttributeUpdate",

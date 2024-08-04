@@ -29,6 +29,7 @@ class AttributeDescriptions:
 class AttributeValueDescriptions:
     ID = "The ID of a value displayed in the interface."
     NAME = "Name of a value displayed in the interface."
+    ADDITIONAL_FIELD ="Dict which contained additional fields for attribute"
     SLUG = "Internal representation of a value (unique per attribute)."
     TYPE = "Type of value (used only when `value` field is set)."
     FILE = "Represents file URL and content type (if attribute value is a file)."

@@ -94,6 +94,9 @@ def generate_unique_slug(
     slugable_value: str,
     slug_field_name: str = "slug",
     *,
+    ref=None,
+    value=None,
+    code=None,
     additional_search_lookup=None,
 ) -> str:
     """Create unique slug for model instance.
@@ -106,13 +109,24 @@ def generate_unique_slug(
         instance: model instance for which slug is created
         slugable_value: value used to create slug
         slug_field_name: name of slug field in instance model
+        ref: optional reference value
+        value: optional value used with ref to create slug
+        code: optional code value
         additional_search_lookup: when provided, it will be used to find the instances
             with the same slug that passed also additional conditions
 
     """
-    slug = slugify(unidecode(slugable_value))
 
-    # in case when slugable_value contains only not allowed in slug characters, slugify
+    if ref and value:
+        slug_base = f"{ref}-{value}"
+    elif code and slugable_value:
+        slug_base = f"{slugable_value}-{code}"
+    else:
+        slug_base = slugable_value
+
+    slug = slugify(unidecode(slug_base))
+
+    # in case when slug_base contains only not allowed in slug characters, slugify
     # function will return empty string, so we need to provide some default value
     if slug == "":
         slug = "-"
@@ -132,18 +146,18 @@ def generate_unique_slug(
     )
 
     unique_slug = prepare_unique_slug(slug, slug_values)
-
     return unique_slug
 
 
-def prepare_unique_slug(slug: str, slug_values: Iterable):
-    """Prepare unique slug value based on provided list of existing slug values."""
-    unique_slug: Union["SafeText", str] = slug
-    extension = 1
+def prepare_unique_slug(slug: str, slug_values: list) -> str:
+    """ Prepare unique slug value based on provided list of existing slug values """
+    base_slug = slug
+    unique_slug = base_slug
+    suffix = 1
 
     while unique_slug in slug_values:
-        extension += 1
-        unique_slug = f"{slug}-{extension}"
+        unique_slug = f"{base_slug}-{suffix}"
+        suffix += 1
 
     return unique_slug
 

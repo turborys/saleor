@@ -38,6 +38,7 @@ from ..translations.mutations import (
 from ..utils import get_user_or_app_from_context
 from .bulk_mutations import (
     CategoryBulkDelete,
+    CategoryBulkCreateOrUpdate,
     CollectionBulkDelete,
     ProductBulkCreate,
     ProductBulkDelete,
@@ -148,6 +149,9 @@ from .types import (
 )
 from .utils import check_for_sorting_by_rank
 
+
+class CategoryMutation(graphene.ObjectType):
+    category_bulk_update = CategoryBulkCreateOrUpdate.Field()
 
 class ProductQueries(graphene.ObjectType):
     digital_content = PermissionsField(
@@ -603,6 +607,7 @@ class ProductMutations(graphene.ObjectType):
     category_create = CategoryCreate.Field()
     category_delete = CategoryDelete.Field()
     category_bulk_delete = CategoryBulkDelete.Field()
+    category_bulk_update = CategoryBulkCreateOrUpdate.Field()
     category_update = CategoryUpdate.Field()
     category_translate = CategoryTranslate.Field()
 

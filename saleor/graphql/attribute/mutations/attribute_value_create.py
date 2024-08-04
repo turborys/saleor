@@ -54,16 +54,28 @@ class AttributeValueCreate(AttributeMixin, ModelMutation):
     @classmethod
     def clean_input(cls, info: ResolveInfo, instance, data, **kwargs):
         cleaned_input = super().clean_input(info, instance, data, **kwargs)
-        if "name" in cleaned_input:
-            cleaned_input["slug"] = generate_unique_slug(
-                instance,
-                cleaned_input["name"],
-                additional_search_lookup={"attribute_id": instance.attribute_id},
-            )
-        input_type = instance.attribute.input_type
+        name = cleaned_input.get("name")
+        additional_fields = cleaned_input.get("additional_fields", {})
 
+        # Extract values from additional_fields
+        ref = additional_fields.get("ref")
+        value = additional_fields.get("value")
+        code = additional_fields.get("code")
+
+        # Generate slug based on conditions
+        cleaned_input["slug"] = generate_unique_slug(
+            instance,
+            name or "",  # Fallback to an empty string if name is not available
+            ref=ref,
+            value=value,
+            code=code,
+            additional_search_lookup={"attribute_id": instance.attribute_id},
+        )
+
+        input_type = instance.attribute.input_type
         is_swatch_attr = input_type == AttributeInputType.SWATCH
         errors: dict[str, list[ValidationError]] = {}
+
         if not is_swatch_attr:
             for field in cls.ONLY_SWATCH_FIELDS:
                 if cleaned_input.get(field):
@@ -77,8 +89,8 @@ class AttributeValueCreate(AttributeMixin, ModelMutation):
             try:
                 cls.validate_swatch_attr_value(cleaned_input)
             except ValidationError as error:
-                errors["value"] = error.error_dict[cls.ATTRIBUTE_VALUES_FIELD]
-                errors["fileUrl"] = error.error_dict[cls.ATTRIBUTE_VALUES_FIELD]
+                errors["value"] = error.error_dict.get(cls.ATTRIBUTE_VALUES_FIELD, [])
+                errors["fileUrl"] = error.error_dict.get(cls.ATTRIBUTE_VALUES_FIELD, [])
 
         if errors:
             raise ValidationError(errors)
