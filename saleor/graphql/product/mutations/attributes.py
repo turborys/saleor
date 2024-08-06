@@ -28,7 +28,8 @@ from ..enums import ProductAttributeType
 
 
 class ProductAttributeAssignInput(BaseInputObjectType):
-    id = graphene.ID(required=True, description="The ID of the attribute to assign.")
+    id = graphene.ID(required=False, description="The ID of the attribute to assign.")
+    slug = graphene.String(required=False, description="The slug of the attribute to assign.")
     type = ProductAttributeType(
         required=True, description="The attribute type to be assigned as."
     )
@@ -98,8 +99,12 @@ class ProductAttributeAssign(BaseMutation, VariantAssignmentValidationMixin):
 
     class Arguments:
         product_type_id = graphene.ID(
-            required=True,
+            required=False,
             description="ID of the product type to assign the attributes into.",
+        )
+        product_type_slug = graphene.String(
+            required=False,
+            description="Slug of the product type to assign the attributes into.",
         )
         operations = NonNullList(
             ProductAttributeAssignInput,
@@ -118,13 +123,30 @@ class ProductAttributeAssign(BaseMutation, VariantAssignmentValidationMixin):
     def get_operations(
         cls, info: ResolveInfo, operations: list[ProductAttributeAssignInput]
     ):
-        """Resolve all passed global ids into integer PKs of the Attribute type."""
+        """Resolve all passed global ids or slugs into integer PKs of the Attribute type."""
         product_attrs_pks = []
         variant_attrs_pks = []
         for operation in operations:
-            pk = cls.get_global_id_or_error(
-                operation.id, only_type=Attribute, field="operations"
-            )
+            if operation.id:
+                pk = cls.get_global_id_or_error(
+                    operation.id, only_type=Attribute, field="operations"
+                )
+            elif operation.slug:
+                # Fetch the attribute by slug
+                try:
+                    attr = attribute_models.Attribute.objects.get(slug=operation.slug)
+                    pk = attr.pk
+                except attribute_models.Attribute.DoesNotExist:
+                    raise ValidationError(
+                        f"Attribute with slug '{operation.slug}' does not exist.",
+                        code=ProductErrorCode.NOT_FOUND.value,
+                        params={"attributes": [operation.slug]},
+                    )
+            else:
+                raise ValidationError(
+                    "Either 'id' or 'slug' must be provided.",
+                    code=ProductErrorCode.INVALID.value,
+                )
 
             variant_selection = (
                 operation.variant_selection
@@ -275,14 +297,38 @@ class ProductAttributeAssign(BaseMutation, VariantAssignmentValidationMixin):
 
     @classmethod
     def perform_mutation(cls, _root, info: ResolveInfo, /, **data):
-        product_type_id: str = data["product_type_id"]
-        operations: list[ProductAttributeAssignInput] = data["operations"]
-        # Retrieve the requested product type
-        product_type: models.ProductType = graphene.Node.get_node_from_global_id(
-            info, product_type_id, only_type=ProductType
-        )
+        product_type_id = data.get("product_type_id")
+        product_type_slug = data.get("product_type_slug")
+        operations = data["operations"]
 
-        # Resolve all the passed IDs to ints
+        # Retrieve the requested product type
+        if product_type_id:
+            product_type = graphene.Node.get_node_from_global_id(
+                info, product_type_id, only_type=ProductType
+            )
+        elif product_type_slug:
+            try:
+                product_type = models.ProductType.objects.get(slug=product_type_slug)
+            except models.ProductType.DoesNotExist:
+                raise ValidationError(
+                    {
+                        "product_type_slug": ValidationError(
+                            f"ProductType with slug '{product_type_slug}' does not exist.",
+                            code=ProductErrorCode.NOT_FOUND.value,
+                        )
+                    }
+                )
+        else:
+            raise ValidationError(
+                {
+                    "product_type_id": ValidationError(
+                        "Either 'product_type_id' or 'product_type_slug' must be provided.",
+                        code=ProductErrorCode.INVALID.value,
+                    )
+                }
+            )
+
+        # Resolve all the passed IDs or slugs to ints
         product_attrs_data, variant_attrs_data = cls.get_operations(info, operations)
         variant_attrs_pks = [pk for pk, _, __ in variant_attrs_data]
 
@@ -299,12 +345,37 @@ class ProductAttributeAssign(BaseMutation, VariantAssignmentValidationMixin):
         # Ensure the attribute are assignable
         cls.clean_operations(product_type, product_attrs_data, variant_attrs_data)
 
+        # Filter out attributes that are already assigned
+        product_attrs_to_add = [data for data in product_attrs_data if
+                                data[0] not in [pk for pk, _, __ in
+                                                cls.get_assigned_attributes(
+                                                    product_type, "product")]]
+        variant_attrs_to_add = [data for data in variant_attrs_data if
+                                data[0] not in [pk for pk, _, __ in
+                                                cls.get_assigned_attributes(
+                                                    product_type, "variant")]]
+
         with traced_atomic_transaction():
             # Commit
-            cls.save_field_values(product_type, "AttributeProduct", product_attrs_data)
-            cls.save_field_values(product_type, "AttributeVariant", variant_attrs_data)
+            cls.save_field_values(product_type, "AttributeProduct",
+                                  product_attrs_to_add)
+            cls.save_field_values(product_type, "AttributeVariant",
+                                  variant_attrs_to_add)
 
         return cls(product_type=product_type)
+
+    @classmethod
+    def get_assigned_attributes(cls, product_type, attribute_type):
+        """Retrieve already assigned attributes for the product type."""
+        if attribute_type == "product":
+            model = attribute_models.AttributeProduct
+        elif attribute_type == "variant":
+            model = attribute_models.AttributeVariant
+        else:
+            raise ValueError("Invalid attribute type")
+
+        return model.objects.filter(product_type=product_type).values_list(
+            'attribute_id', flat=True)
 
 
 class ProductAttributeUnassign(BaseMutation):
