@@ -4,7 +4,7 @@ from .product_variant_preorder_deactivate import ProductVariantPreorderDeactivat
 from .product_variant_reorder import ProductVariantReorder
 from .product_variant_set_default import ProductVariantSetDefault
 from .product_variant_update import ProductVariantUpdate
-from .variant_media_assign import VariantMediaAssign
+from .variant_media_assign import VariantMediaAssign, VariantMediaBulkAssign
 from .variant_media_unassign import VariantMediaUnassign
 
 __all__ = [
@@ -15,5 +15,6 @@ __all__ = [
     "ProductVariantSetDefault",
     "ProductVariantUpdate",
     "VariantMediaAssign",
+    "VariantMediaBulkAssign",
     "VariantMediaUnassign",
 ]

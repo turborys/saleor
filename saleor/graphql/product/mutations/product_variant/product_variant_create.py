@@ -54,6 +54,8 @@ class ProductVariantInput(BaseInputObjectType):
         description="List of attributes specific to this variant.",
     )
     sku = graphene.String(description="Stock keeping unit.")
+    barcode = graphene.String(description="Barcode.", required=False)
+
     name = graphene.String(description="Variant name.", required=False)
     track_inventory = graphene.Boolean(
         description=(

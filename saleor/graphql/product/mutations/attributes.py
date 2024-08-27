@@ -346,14 +346,15 @@ class ProductAttributeAssign(BaseMutation, VariantAssignmentValidationMixin):
         cls.clean_operations(product_type, product_attrs_data, variant_attrs_data)
 
         # Filter out attributes that are already assigned
-        product_attrs_to_add = [data for data in product_attrs_data if
-                                data[0] not in [pk for pk, _, __ in
-                                                cls.get_assigned_attributes(
-                                                    product_type, "product")]]
-        variant_attrs_to_add = [data for data in variant_attrs_data if
-                                data[0] not in [pk for pk, _, __ in
-                                                cls.get_assigned_attributes(
-                                                    product_type, "variant")]]
+        product_attrs_to_add = [
+            data for data in product_attrs_data
+            if data[0] not in cls.get_assigned_attributes(product_type, "product")
+        ]
+
+        variant_attrs_to_add = [
+            data for data in variant_attrs_data
+            if data[0] not in cls.get_assigned_attributes(product_type, "variant")
+        ]
 
         with traced_atomic_transaction():
             # Commit

@@ -254,10 +254,13 @@ class ProcessedIconImage(ProcessedImage):
     LOSSLESS_WEBP = True
 
 
-def get_filename_from_url(url: str) -> str:
+def get_filename_from_url(url: str, include_hash: bool = True) -> str:
     """Prepare a unique filename for file from the URL to avoid overwriting."""
     file_name = os.path.basename(url)
     name, format = os.path.splitext(file_name)
     name = name[:FILE_NAME_MAX_LENGTH]
-    hash = secrets.token_hex(nbytes=4)
-    return f"{name}_{hash}{format}"
+    if include_hash:
+        hash = secrets.token_hex(nbytes=4)
+        return f"{name}_{hash}{format}"
+    else:
+        return f"{name}{format}"

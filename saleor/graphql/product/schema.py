@@ -41,10 +41,12 @@ from .bulk_mutations import (
     CategoryBulkCreateOrUpdate,
     CollectionBulkDelete,
     ProductBulkCreate,
+    ProductBulkCreateOrUpdate,
     ProductBulkDelete,
     ProductMediaBulkDelete,
     ProductTypeBulkDelete,
     ProductVariantBulkCreate,
+    ProductVariantBulkCreateOrUpdate,
     ProductVariantBulkDelete,
     ProductVariantBulkUpdate,
     ProductVariantStocksCreate,
@@ -76,6 +78,7 @@ from .mutations import (
     ProductCreate,
     ProductDelete,
     ProductMediaCreate,
+    ProductMediaBulkCreateOrUpdate,
     ProductMediaDelete,
     ProductMediaReorder,
     ProductMediaUpdate,
@@ -83,6 +86,7 @@ from .mutations import (
     ProductTypeDelete,
     ProductTypeUpdate,
     ProductUpdate,
+    ProductBulkUpdate,
     ProductVariantCreate,
     ProductVariantDelete,
     ProductVariantPreorderDeactivate,
@@ -90,6 +94,7 @@ from .mutations import (
     ProductVariantSetDefault,
     ProductVariantUpdate,
     VariantMediaAssign,
+    VariantMediaBulkAssign,
     VariantMediaUnassign,
 )
 from .mutations.attributes import (
@@ -103,6 +108,7 @@ from .mutations.attributes import (
 from .mutations.channels import (
     CollectionChannelListingUpdate,
     ProductChannelListingUpdate,
+    ProductChannelListingsUpdate,
     ProductVariantChannelListingUpdate,
 )
 from .mutations.digital_contents import (
@@ -624,14 +630,18 @@ class ProductMutations(graphene.ObjectType):
     product_create = ProductCreate.Field()
     product_delete = ProductDelete.Field()
     product_bulk_create = ProductBulkCreate.Field()
+    product_bulk_create_or_update = ProductBulkCreateOrUpdate.Field()
     product_bulk_delete = ProductBulkDelete.Field()
     product_update = ProductUpdate.Field()
+    product_bulk_update = ProductBulkUpdate.Field()
     product_bulk_translate = ProductBulkTranslate.Field()
     product_translate = ProductTranslate.Field()
 
     product_channel_listing_update = ProductChannelListingUpdate.Field()
+    product_channel_listings_update = ProductChannelListingsUpdate.Field()
 
     product_media_create = ProductMediaCreate.Field()
+    product_media_create_or_update = ProductMediaBulkCreateOrUpdate.Field()
     product_variant_reorder = ProductVariantReorder.Field()
     product_media_delete = ProductMediaDelete.Field()
     product_media_bulk_delete = ProductMediaBulkDelete.Field()
@@ -654,6 +664,7 @@ class ProductMutations(graphene.ObjectType):
     product_variant_create = ProductVariantCreate.Field()
     product_variant_delete = ProductVariantDelete.Field()
     product_variant_bulk_create = ProductVariantBulkCreate.Field()
+    product_variant_bulk_create_or_update = ProductVariantBulkCreateOrUpdate.Field()
     product_variant_bulk_update = ProductVariantBulkUpdate.Field()
     product_variant_bulk_delete = ProductVariantBulkDelete.Field()
     product_variant_stocks_create = ProductVariantStocksCreate.Field()
@@ -670,4 +681,5 @@ class ProductMutations(graphene.ObjectType):
     product_variant_preorder_deactivate = ProductVariantPreorderDeactivate.Field()
 
     variant_media_assign = VariantMediaAssign.Field()
+    variant_media_bulk_assign = VariantMediaBulkAssign.Field()
     variant_media_unassign = VariantMediaUnassign.Field()

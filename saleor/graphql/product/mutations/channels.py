@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ from ....checkout.models import CheckoutLine
 from ....core.tracing import traced_atomic_transaction
 from ....core.utils.date_time import convert_to_utc_date_time
 from ....permission.enums import ProductPermissions
+from ....channel import models
 from ....product.error_codes import CollectionErrorCode, ProductErrorCode
 from ....product.models import (
     CollectionChannelListing,
@@ -135,6 +137,522 @@ class ProductChannelListingUpdateInput(BaseInputObjectType):
 
     class Meta:
         doc_category = DOC_CATEGORY_PRODUCTS
+
+
+# class ProductChannelListingsUpdate(BaseChannelListingMutation):
+#     products = graphene.List(
+#         graphene.NonNull(Product),
+#         description="List of updated product instances.",
+#     )
+#
+#     class Arguments:
+#         ids = graphene.List(
+#             graphene.NonNull(graphene.ID),
+#             required=True,
+#             description="List of IDs of products to update.",
+#         )
+#         input = ProductChannelListingUpdateInput(
+#             required=True,
+#             description="Fields required to create or update product channel listings.",
+#         )
+#
+#     class Meta:
+#         description = "Manage multiple products' availability in channels."
+#         doc_category = DOC_CATEGORY_PRODUCTS
+#         permissions = (ProductPermissions.MANAGE_PRODUCTS,)
+#         error_type_class = ProductChannelListingError
+#         error_type_field = "product_channel_listing_errors"
+#
+#     @classmethod
+#     def clean_available_for_purchase(cls, cleaned_input, errors: ErrorType):
+#         channels_with_invalid_available_for_purchase: list[str] = []
+#         channels_with_invalid_date: list[str] = []
+#         for update_channel in cleaned_input.get("update_channels", []):
+#             is_available_for_purchase = update_channel.get("is_available_for_purchase")
+#             available_for_purchase_date = update_channel.get(
+#                 "available_for_purchase_date"
+#             ) or update_channel.get("available_for_purchase_at")
+#             if not is_available_for_purchase and available_for_purchase_date:
+#                 channels_with_invalid_available_for_purchase.append(
+#                     update_channel["channel_id"]
+#                 )
+#             channels_with_invalid_date = cls.clean_available_fo_purchase_date(
+#                 update_channel, channels_with_invalid_date
+#             )
+#
+#         if channels_with_invalid_available_for_purchase:
+#             error_msg = (
+#                 "Cannot set available for purchase date when"
+#                 " isAvailableForPurchase is false."
+#             )
+#             errors["available_for_purchase_date"].append(
+#                 ValidationError(
+#                     error_msg,
+#                     code=ProductErrorCode.INVALID.value,
+#                     params={"channels": channels_with_invalid_available_for_purchase},
+#                 )
+#             )
+#         if channels_with_invalid_date:
+#             error_msg = (
+#                 "Only one of argument: availableForPurchaseDate or "
+#                 "availableForPurchaseAt must be specified."
+#             )
+#             errors["available_for_purchase_date"].append(
+#                 ValidationError(
+#                     error_msg,
+#                     code=ProductErrorCode.INVALID.value,
+#                     params={"channels": channels_with_invalid_date},
+#                 )
+#             )
+#
+#     @staticmethod
+#     def clean_available_fo_purchase_date(
+#         update_channel_input, channels_with_invalid_date
+#     ):
+#         available_for_purchase_date = update_channel_input.get(
+#             "available_for_purchase_date"
+#         )
+#         available_for_purchase_at = update_channel_input.get(
+#             "available_for_purchase_at"
+#         )
+#         if available_for_purchase_date and available_for_purchase_at:
+#             channels_with_invalid_date.append(update_channel_input["channel_id"])
+#         return channels_with_invalid_date
+#
+#     @classmethod
+#     def validate_variants(cls, cleaned_input, errors):
+#         for update_channel in cleaned_input.get("update_channels", []):
+#             error = check_for_duplicates(
+#                 update_channel, "add_variants", "remove_variants", "variants"
+#             )
+#             if error:
+#                 error.code = ProductErrorCode.DUPLICATED_INPUT_ITEM.value
+#                 errors["addVariants"].append(error)
+#
+#     @classmethod
+#     def update_channels(cls, product: "ProductModel", update_channels: list[dict]):
+#         for update_channel in update_channels:
+#             channel = update_channel["channel"]
+#             add_variants = update_channel.get("add_variants", None)
+#             remove_variants = update_channel.get("remove_variants", None)
+#             defaults = {"currency": channel.currency_code}
+#             for field in ["is_published", "published_at", "visible_in_listings"]:
+#                 if field in update_channel.keys():
+#                     defaults[field] = update_channel[field]
+#             is_available_for_purchase = update_channel.get("is_available_for_purchase")
+#             if is_available_for_purchase is not None:
+#                 defaults[
+#                     "available_for_purchase_at"
+#                 ] = cls.get_available_for_purchase_date(
+#                     is_available_for_purchase, update_channel
+#                 )
+#             product_channel_listing, _ = ProductChannelListing.objects.update_or_create(
+#                 product=product, channel=channel, defaults=defaults
+#             )
+#             cls.add_variants(channel, add_variants)
+#             cls.remove_variants(
+#                 product_channel_listing, product, channel, remove_variants
+#             )
+#
+#     @staticmethod
+#     def get_available_for_purchase_date(is_available_for_purchase, update_channel):
+#         available_for_purchase_date = update_channel.get("available_for_purchase_date")
+#         available_for_purchase_date = (
+#             convert_to_utc_date_time(available_for_purchase_date)
+#             if available_for_purchase_date
+#             else update_channel.get("available_for_purchase_at")
+#         )
+#         if is_available_for_purchase is False:
+#             return None
+#         elif is_available_for_purchase is True and not available_for_purchase_date:
+#             return datetime.now(pytz.UTC)
+#         return available_for_purchase_date
+#
+#     @classmethod
+#     def add_variants(cls, channel, add_variants: list[dict]):
+#         if not add_variants:
+#             return
+#         variants = cls.get_nodes_or_error(add_variants, "id", ProductVariant)
+#         variant_channel_listings = []
+#         for variant in variants:
+#             variant_channel_listings.append(
+#                 ProductVariantChannelListing(channel=channel, variant=variant)
+#             )
+#
+#         try:
+#             ProductVariantChannelListing.objects.bulk_create(variant_channel_listings)
+#         except IntegrityError:
+#             raise ValidationError(
+#                 {
+#                     "addVariants": ValidationError(
+#                         "One of channel listing already "
+#                         "exists for this product variant.",
+#                         code=ProductErrorCode.ALREADY_EXISTS.value,
+#                     )
+#                 }
+#             )
+#
+#     @classmethod
+#     def remove_variants(
+#         cls,
+#         product_channel_listing,
+#         product,
+#         channel,
+#         remove_variants: list[dict],
+#     ):
+#         if not remove_variants:
+#             return
+#         variants = cls.get_nodes_or_error(remove_variants, "id", ProductVariant)
+#         ProductVariantChannelListing.objects.filter(
+#             channel=channel, variant__in=variants
+#         ).delete()
+#         if not ProductVariantChannelListing.objects.filter(
+#             channel=channel, variant__product_id=product
+#         ).exists():
+#             product_channel_listing.delete()
+#
+#         cls.perform_checkout_lines_delete(variants, [channel.id])
+#
+#     @classmethod
+#     def perform_checkout_lines_delete(cls, variants, channel_id):
+#         lines_id_and_checkout_id = list(
+#             CheckoutLine.objects.filter(
+#                 variant__in=variants, checkout__channel__id__in=channel_id
+#             ).values("id", "checkout__pk")
+#         )
+#         lines_ids = {line["id"] for line in lines_id_and_checkout_id}
+#
+#         CheckoutLine.objects.filter(id__in=lines_ids).delete()
+#
+#     @classmethod
+#     def remove_channels(cls, product: "ProductModel", remove_channels: list[dict]):
+#         ProductChannelListing.objects.filter(
+#             product=product, channel_id__in=remove_channels
+#         ).delete()
+#         ProductVariantChannelListing.objects.filter(
+#             variant__product_id=product.pk, channel_id__in=remove_channels
+#         ).delete()
+#         variant_ids = product.variants.all().values_list("id", flat=True)
+#         cls.perform_checkout_lines_delete(variant_ids, remove_channels)
+#
+#     @classmethod
+#     def save(cls, info: ResolveInfo, product: "ProductModel", cleaned_input: dict):
+#         with traced_atomic_transaction():
+#             cls.update_channels(product, cleaned_input.get("update_channels", []))
+#             cls.remove_channels(product, cleaned_input.get("remove_channels", []))
+#
+#     @classmethod
+#     def post_save_actions(
+#         cls, info: ResolveInfo, product: "ProductModel", cleaned_input: dict
+#     ):
+#         modified_channel_ids = [
+#             update_channel["channel"].id
+#             for update_channel in cleaned_input.get("update_channels", [])
+#         ]
+#         modified_channel_ids.extend(cleaned_input.get("remove_channels", []))
+#         cls.call_event(
+#             mark_products_in_channels_as_dirty,
+#             {channel_id: {product.pk} for channel_id in modified_channel_ids},
+#         )
+#         product = ProductModel.objects.prefetched_for_webhook().get(pk=product.pk)
+#         manager = get_plugin_manager_promise(info.context).get()
+#         cls.call_event(manager.product_updated, product)
+#
+#     @classmethod
+#     def perform_mutation(cls, _root, info: ResolveInfo, /, *, ids, input):
+#         products = cls.get_nodes_or_error(ids, "id", only_type=Product)
+#         errors: defaultdict[str, list[ValidationError]] = defaultdict(list)
+#         updated_products = []
+#
+#         for product in products:
+#             cleaned_input = cls.clean_channels(
+#                 info,
+#                 input,
+#                 errors,
+#                 ProductErrorCode.DUPLICATED_INPUT_ITEM.value,
+#                 input_source="update_channels",
+#             )
+#             cls.clean_publication_date(
+#                 errors, ProductErrorCode, cleaned_input, input_source="update_channels"
+#             )
+#             cls.clean_available_for_purchase(cleaned_input, errors)
+#             cls.validate_variants(cleaned_input, errors)
+#             if not product.category:
+#                 cls.validate_product_without_category(cleaned_input, errors)
+#
+#             if errors:
+#                 raise ValidationError(errors)
+#
+#             cls.save(info, product, cleaned_input)
+#             cls.post_save_actions(info, product, cleaned_input)
+#             updated_products.append(ChannelContext(node=product, channel_slug=None))
+#
+#         return ProductChannelListingsUpdate(products=updated_products)
+
+class ProductChannelListingsUpdate(BaseChannelListingMutation):
+    products = graphene.List(
+        graphene.NonNull(Product),
+        description="List of updated product instances.",
+    )
+
+    class Arguments:
+        slugs = graphene.List(
+            graphene.NonNull(graphene.String),
+            required=True,
+            description="List of slugs of products to update.",
+        )
+        input = ProductChannelListingUpdateInput(
+            required=True,
+            description="Fields required to create or update product channel listings.",
+        )
+
+    class Meta:
+        description = "Manage multiple products' availability in channels."
+        doc_category = DOC_CATEGORY_PRODUCTS
+        permissions = (ProductPermissions.MANAGE_PRODUCTS,)
+        error_type_class = ProductChannelListingError
+        error_type_field = "product_channel_listing_errors"
+
+    @classmethod
+    def get_products_by_slugs(cls, slugs):
+        products = list(ProductModel.objects.filter(slug__in=slugs))
+        if not products or len(products) != len(slugs):
+            missing_slugs = set(slugs) - {product.slug for product in products}
+            raise ValidationError(
+                {
+                    "slug": ValidationError(
+                        f"Could not resolve to a node with the slugs: {', '.join(missing_slugs)}.",
+                        code=ProductErrorCode.NOT_FOUND.value,
+                    )
+                }
+            )
+        return products
+
+    @classmethod
+    def clean_available_for_purchase(cls, cleaned_input, errors: ErrorType):
+        channels_with_invalid_available_for_purchase: list[str] = []
+        channels_with_invalid_date: list[str] = []
+        for update_channel in cleaned_input.get("update_channels", []):
+            is_available_for_purchase = update_channel.get("is_available_for_purchase")
+            available_for_purchase_date = update_channel.get(
+                "available_for_purchase_date"
+            ) or update_channel.get("available_for_purchase_at")
+            if not is_available_for_purchase and available_for_purchase_date:
+                channels_with_invalid_available_for_purchase.append(
+                    update_channel["channel_id"]
+                )
+            channels_with_invalid_date = cls.clean_available_fo_purchase_date(
+                update_channel, channels_with_invalid_date
+            )
+
+        if channels_with_invalid_available_for_purchase:
+            error_msg = (
+                "Cannot set available for purchase date when"
+                " isAvailableForPurchase is false."
+            )
+            errors["available_for_purchase_date"].append(
+                ValidationError(
+                    error_msg,
+                    code=ProductErrorCode.INVALID.value,
+                    params={"channels": channels_with_invalid_available_for_purchase},
+                )
+            )
+        if channels_with_invalid_date:
+            error_msg = (
+                "Only one of argument: availableForPurchaseDate or "
+                "availableForPurchaseAt must be specified."
+            )
+            errors["available_for_purchase_date"].append(
+                ValidationError(
+                    error_msg,
+                    code=ProductErrorCode.INVALID.value,
+                    params={"channels": channels_with_invalid_date},
+                )
+            )
+
+    @staticmethod
+    def clean_available_fo_purchase_date(
+        update_channel_input, channels_with_invalid_date
+    ):
+        available_for_purchase_date = update_channel_input.get(
+            "available_for_purchase_date"
+        )
+        available_for_purchase_at = update_channel_input.get(
+            "available_for_purchase_at"
+        )
+        if available_for_purchase_date and available_for_purchase_at:
+            channels_with_invalid_date.append(update_channel_input["channel_id"])
+        return channels_with_invalid_date
+
+    @classmethod
+    def validate_variants(cls, cleaned_input, errors):
+        for update_channel in cleaned_input.get("update_channels", []):
+            error = check_for_duplicates(
+                update_channel, "add_variants", "remove_variants", "variants"
+            )
+            if error:
+                error.code = ProductErrorCode.DUPLICATED_INPUT_ITEM.value
+                errors["addVariants"].append(error)
+
+    @classmethod
+    def update_channels(cls, product: "ProductModel", update_channels: list[dict]):
+        for update_channel in update_channels:
+            channel = update_channel["channel"]
+            add_variants = update_channel.get("add_variants", None)
+            remove_variants = update_channel.get("remove_variants", None)
+            defaults = {"currency": channel.currency_code}
+            for field in ["is_published", "published_at", "visible_in_listings"]:
+                if field in update_channel.keys():
+                    defaults[field] = update_channel[field]
+            is_available_for_purchase = update_channel.get("is_available_for_purchase")
+            if is_available_for_purchase is not None:
+                defaults[
+                    "available_for_purchase_at"
+                ] = cls.get_available_for_purchase_date(
+                    is_available_for_purchase, update_channel
+                )
+            product_channel_listing, _ = ProductChannelListing.objects.update_or_create(
+                product=product, channel=channel, defaults=defaults
+            )
+            cls.add_variants(channel, add_variants)
+            cls.remove_variants(
+                product_channel_listing, product, channel, remove_variants
+            )
+
+    @staticmethod
+    def get_available_for_purchase_date(is_available_for_purchase, update_channel):
+        available_for_purchase_date = update_channel.get("available_for_purchase_date")
+        available_for_purchase_date = (
+            convert_to_utc_date_time(available_for_purchase_date)
+            if available_for_purchase_date
+            else update_channel.get("available_for_purchase_at")
+        )
+        if is_available_for_purchase is False:
+            return None
+        elif is_available_for_purchase is True and not available_for_purchase_date:
+            return datetime.now(pytz.UTC)
+        return available_for_purchase_date
+
+    @classmethod
+    def add_variants(cls, channel, add_variants: list[dict]):
+        if not add_variants:
+            return
+        variants = cls.get_nodes_or_error(add_variants, "id", ProductVariant)
+        variant_channel_listings = []
+        for variant in variants:
+            variant_channel_listings.append(
+                ProductVariantChannelListing(channel=channel, variant=variant)
+            )
+
+        try:
+            ProductVariantChannelListing.objects.bulk_create(variant_channel_listings)
+        except IntegrityError:
+            raise ValidationError(
+                {
+                    "addVariants": ValidationError(
+                        "One of channel listing already "
+                        "exists for this product variant.",
+                        code=ProductErrorCode.ALREADY_EXISTS.value,
+                    )
+                }
+            )
+
+    @classmethod
+    def remove_variants(
+        cls,
+        product_channel_listing,
+        product,
+        channel,
+        remove_variants: list[dict],
+    ):
+        if not remove_variants:
+            return
+        variants = cls.get_nodes_or_error(remove_variants, "id", ProductVariant)
+        ProductVariantChannelListing.objects.filter(
+            channel=channel, variant__in=variants
+        ).delete()
+        if not ProductVariantChannelListing.objects.filter(
+            channel=channel, variant__product_id=product
+        ).exists():
+            product_channel_listing.delete()
+
+        cls.perform_checkout_lines_delete(variants, [channel.id])
+
+    @classmethod
+    def perform_checkout_lines_delete(cls, variants, channel_id):
+        lines_id_and_checkout_id = list(
+            CheckoutLine.objects.filter(
+                variant__in=variants, checkout__channel__id__in=channel_id
+            ).values("id", "checkout__pk")
+        )
+        lines_ids = {line["id"] for line in lines_id_and_checkout_id}
+
+        CheckoutLine.objects.filter(id__in=lines_ids).delete()
+
+    @classmethod
+    def remove_channels(cls, product: "ProductModel", remove_channels: list[dict]):
+        ProductChannelListing.objects.filter(
+            product=product, channel_id__in=remove_channels
+        ).delete()
+        ProductVariantChannelListing.objects.filter(
+            variant__product_id=product.pk, channel_id__in=remove_channels
+        ).delete()
+        variant_ids = product.variants.all().values_list("id", flat=True)
+        cls.perform_checkout_lines_delete(variant_ids, remove_channels)
+
+    @classmethod
+    def save(cls, info: ResolveInfo, product: "ProductModel", cleaned_input: dict):
+        with traced_atomic_transaction():
+            cls.update_channels(product, cleaned_input.get("update_channels", []))
+            cls.remove_channels(product, cleaned_input.get("remove_channels", []))
+
+    @classmethod
+    def post_save_actions(
+        cls, info: ResolveInfo, product: "ProductModel", cleaned_input: dict
+    ):
+        modified_channel_ids = [
+            update_channel["channel"].id
+            for update_channel in cleaned_input.get("update_channels", [])
+        ]
+        modified_channel_ids.extend(cleaned_input.get("remove_channels", []))
+        cls.call_event(
+            mark_products_in_channels_as_dirty,
+            {channel_id: {product.pk} for channel_id in modified_channel_ids},
+        )
+        product = ProductModel.objects.prefetched_for_webhook().get(pk=product.pk)
+        manager = get_plugin_manager_promise(info.context).get()
+        cls.call_event(manager.product_updated, product)
+
+    @classmethod
+    def perform_mutation(cls, _root, info: ResolveInfo, /, *, slugs, input):
+        products = cls.get_products_by_slugs(slugs)
+        errors: defaultdict[str, list[ValidationError]] = defaultdict(list)
+        updated_products = []
+
+        for product in products:
+            cleaned_input = cls.clean_channels(
+                info,
+                input,
+                errors,
+                ProductErrorCode.DUPLICATED_INPUT_ITEM.value,
+                input_source="update_channels",
+            )
+            cls.clean_publication_date(
+                errors, ProductErrorCode, cleaned_input, input_source="update_channels"
+            )
+            cls.clean_available_for_purchase(cleaned_input, errors)
+            cls.validate_variants(cleaned_input, errors)
+            if not product.category:
+                cls.validate_product_without_category(cleaned_input, errors)
+
+            if errors:
+                raise ValidationError(errors)
+
+            cls.save(info, product, cleaned_input)
+            cls.post_save_actions(info, product, cleaned_input)
+            updated_products.append(ChannelContext(node=product, channel_slug=None))
+
+        return ProductChannelListingsUpdate(products=updated_products)
 
 
 class ProductChannelListingUpdate(BaseChannelListingMutation):

@@ -2,10 +2,11 @@ from .category_bulk_delete import CategoryBulkDelete
 from .category_bulk_create_or_update import CategoryBulkCreateOrUpdate
 from .collection_bulk_delete import CollectionBulkDelete
 from .product_bulk_create import ProductBulkCreate
+from .product_bulk_create_or_update import ProductBulkCreateOrUpdate
 from .product_bulk_delete import ProductBulkDelete
 from .product_media_bulk_delete import ProductMediaBulkDelete
 from .product_type_bulk_delete import ProductTypeBulkDelete
-from .product_variant_bulk_create import ProductVariantBulkCreate
+from .product_variant_bulk_create import ProductVariantBulkCreate, ProductVariantBulkCreateOrUpdate
 from .product_variant_bulk_delete import ProductVariantBulkDelete
 from .product_variant_bulk_update import ProductVariantBulkUpdate
 from .product_variant_stocks_create import ProductVariantStocksCreate
@@ -20,7 +21,9 @@ __all__ = [
     "ProductMediaBulkDelete",
     "ProductTypeBulkDelete",
     "ProductBulkCreate",
+    "ProductBulkCreateOrUpdate",
     "ProductVariantBulkCreate",
+    "ProductVariantBulkCreateOrUpdate",
     "ProductVariantBulkDelete",
     "ProductVariantBulkUpdate",
     "ProductVariantStocksCreate",

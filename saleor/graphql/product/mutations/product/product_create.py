@@ -1,3 +1,4 @@
+import base64
 import graphene
 from django.core.exceptions import ValidationError
 
@@ -30,8 +31,16 @@ from ..utils import clean_tax_code
 
 
 class ProductInput(BaseInputObjectType):
+    product_type = graphene.ID(
+        description="ID of the type that product belongs to.",
+        name="productType",
+        required=False,
+    )
+
     attributes = NonNullList(AttributeValueInput, description="List of attributes.")
-    category = graphene.ID(description="ID of the product's category.", name="category")
+    category = graphene.String(description="Slug of the product's category.",
+                               name="category")
+
     charge_taxes = graphene.Boolean(
         description=(
             "Determine if taxes are being charged for the product. "
@@ -149,6 +158,17 @@ class ProductCreate(ModelMutation):
         return attributes
 
     @classmethod
+    def decode_base64_category_id(cls, encoded_id: str) -> int:
+        try:
+            decoded_str = base64.b64decode(encoded_id).decode("utf-8")
+            if decoded_str.startswith("Category:"):
+                return int(decoded_str.split(":")[1])
+            else:
+                raise ValidationError("Invalid category format.")
+        except (ValueError, IndexError, base64.binascii.Error):
+            raise ValidationError("Invalid category format or ID.")
+
+    @classmethod
     def clean_input(cls, info: ResolveInfo, instance, data, **kwargs):
         cleaned_input = super().clean_input(info, instance, data, **kwargs)
 
@@ -169,10 +189,19 @@ class ProductCreate(ModelMutation):
                 }
             )
 
-        # Attributes are provided as list of `AttributeValueInput` objects.
-        # We need to transform them into the format they're stored in the
-        # `Product` model, which is HStore field that maps attribute's PK to
-        # the value's PK.
+        # Handle category
+        encoded_category_id = cleaned_input.get("category")
+        if encoded_category_id:
+            try:
+                category_id = cls.decode_base64_category_id(encoded_category_id)
+                category = models.Category.objects.get(id=category_id)
+                # category = models.Category.objects.get(id=category_id)
+                cleaned_input["category"] = category
+            except models.Category.DoesNotExist:
+                raise ValidationError(
+                    {"category_id": ValidationError(
+                        "Category with this ID does not exist.")}
+                )
 
         attributes = cleaned_input.get("attributes")
         product_type = (

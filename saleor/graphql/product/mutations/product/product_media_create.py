@@ -116,30 +116,49 @@ class ProductMediaCreate(BaseMutation):
             )
         if media_url:
             # Remote URLs can point to the images or oembed data.
-            # In case of images, file is downloaded. Otherwise we keep only
-            # URL to remote media.
             if is_image_url(media_url):
                 validate_image_url(
                     media_url, "media_url", ProductErrorCode.INVALID.value
                 )
-                filename = get_filename_from_url(media_url)
+                filename = get_filename_from_url(media_url, include_hash=False)
                 image_data = HTTPClient.send_request(
                     "GET", media_url, stream=True, allow_redirects=False
                 )
                 image_file = File(image_data.raw, filename)
-                media = product.media.create(
-                    image=image_file,
-                    alt=alt,
-                    type=ProductMediaTypes.IMAGE,
-                )
+                existing_media = models.ProductMedia.objects.filter(
+                    image=f"products/{image_file}").first()
+
+                if existing_media:
+                    existing_media.alt = alt
+                    existing_media.type = ProductMediaTypes.IMAGE
+                    existing_media.save()
+                    media = existing_media
+                else:
+                    media = product.media.create(
+                        image=image_file,
+                        alt=alt,
+                        type=ProductMediaTypes.IMAGE,
+                    )
             else:
                 oembed_data, media_type = get_oembed_data(media_url, "media_url")
-                media = product.media.create(
-                    external_url=oembed_data["url"],
-                    alt=oembed_data.get("title", alt),
-                    type=media_type,
-                    oembed_data=oembed_data,
-                )
+
+                existing_media = product.media.filter(
+                    external_url=oembed_data["url"]).first()
+
+                if existing_media:
+                    existing_media.alt = oembed_data.get("title", alt)
+                    existing_media.type = media_type
+                    existing_media.oembed_data = oembed_data
+                    existing_media.save()
+                    media = existing_media
+                else:
+                    media = product.media.create(
+                        external_url=oembed_data["url"],
+                        alt=oembed_data.get("title", alt),
+                        type=media_type,
+                        oembed_data=oembed_data,
+                    )
+
         manager = get_plugin_manager_promise(info.context).get()
         cls.call_event(manager.product_updated, product)
         cls.call_event(manager.product_media_created, media)

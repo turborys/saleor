@@ -19,7 +19,7 @@ from ....discount.utils import mark_active_catalogue_promotion_rules_as_dirty
 from ....permission.enums import ProductPermissions
 from ....product import ProductMediaTypes, models
 from ....product.error_codes import ProductBulkCreateErrorCode
-from ....product.models import CollectionProduct
+from ....product.models import CollectionProduct, Category
 from ....thumbnail.utils import get_filename_from_url
 from ....warehouse.models import Warehouse
 from ....webhook.event_types import WebhookEventAsyncType
@@ -117,7 +117,9 @@ class ProductBulkResult(BaseObjectType):
 
 class ProductBulkCreateInput(ProductCreateInput):
     attributes = NonNullList(AttributeValueInput, description="List of attributes.")
-    category = graphene.ID(description="ID of the product's category.", name="category")
+    category = graphene.String(equired=False,
+                               description="Slug of the product's category.",
+                               name="category")
     collections = NonNullList(
         graphene.ID,
         description="List of IDs of collections that the product belongs to.",
@@ -195,7 +197,7 @@ class ProductBulkCreate(BaseMutation):
         error_policy = ErrorPolicyEnum(
             required=False,
             description="Policies of error handling. DEFAULT: "
-            + ErrorPolicyEnum.REJECT_EVERYTHING.name,
+                        + ErrorPolicyEnum.REJECT_EVERYTHING.name,
         )
 
     class Meta:
@@ -456,7 +458,7 @@ class ProductBulkCreate(BaseMutation):
                     ProductBulkCreateError(
                         path=f"media.{index}",
                         message=f"Alt field exceeds the character "
-                        f"limit of {ALT_CHAR_LIMIT}.",
+                                f"limit of {ALT_CHAR_LIMIT}.",
                         code=ProductBulkCreateErrorCode.INVALID.value,
                     )
                 )
@@ -588,48 +590,26 @@ class ProductBulkCreate(BaseMutation):
                 index_error_map,
             )
 
+        # Handle category
+        category_slug = cleaned_input.pop("category", None)
+        if category_slug:
+            try:
+                category = Category.objects.get(slug=category_slug)
+                cleaned_input["category"] = category
+            except Category.DoesNotExist:
+                index_error_map[product_index].append(
+                    ProductBulkCreateError(
+                        path="category",
+                        message="Category with the given slug does not exist.",
+                        code=ProductBulkCreateErrorCode.NOT_FOUND.value,
+                    )
+                )
+                cleaned_input["category"] = None
+
         if base_fields_errors_count > 0 or attributes_errors_count > 0:
             return None
 
         return cleaned_input if cleaned_input else None
-
-    @classmethod
-    def clean_products(cls, info, products_data, index_error_map):
-        cleaned_inputs_map: dict = {}
-        new_slugs: list = []
-
-        warehouse_global_id_to_instance_map = {
-            graphene.Node.to_global_id("Warehouse", warehouse.id): warehouse
-            for warehouse in Warehouse.objects.all()
-        }
-        channel_global_id_to_instance_map = {
-            graphene.Node.to_global_id("Channel", channel.id): channel
-            for channel in models.Channel.objects.all()
-        }
-
-        duplicated_sku = get_duplicated_values(
-            [
-                variant.sku
-                for product_data in products_data
-                if product_data.variants
-                for variant in product_data.variants
-                if variant.sku
-            ]
-        )
-
-        for product_index, product_data in enumerate(products_data):
-            cleaned_input = cls.clean_product_input(
-                info,
-                product_data,
-                channel_global_id_to_instance_map,
-                warehouse_global_id_to_instance_map,
-                duplicated_sku,
-                new_slugs,
-                product_index,
-                index_error_map,
-            )
-            cleaned_inputs_map[product_index] = cleaned_input
-        return cleaned_inputs_map
 
     @classmethod
     def create_products(cls, info, cleaned_inputs_map, index_error_map):
@@ -677,6 +657,10 @@ class ProductBulkCreate(BaseMutation):
                     for channel_listing in channel_listings:
                         channel_listing["product"] = instance
 
+                # assign category if exists
+                if category := cleaned_input.get("category"):
+                    instance.category = category
+
             except ValidationError as exc:
                 for key, value in exc.error_dict.items():
                     for e in value:
@@ -692,6 +676,44 @@ class ProductBulkCreate(BaseMutation):
                 )
 
         return instances_data_and_errors_list
+
+    @classmethod
+    def clean_products(cls, info, products_data, index_error_map):
+        cleaned_inputs_map: dict = {}
+        new_slugs: list = []
+
+        warehouse_global_id_to_instance_map = {
+            graphene.Node.to_global_id("Warehouse", warehouse.id): warehouse
+            for warehouse in Warehouse.objects.all()
+        }
+        channel_global_id_to_instance_map = {
+            graphene.Node.to_global_id("Channel", channel.id): channel
+            for channel in models.Channel.objects.all()
+        }
+
+        duplicated_sku = get_duplicated_values(
+            [
+                variant.sku
+                for product_data in products_data
+                if product_data.variants
+                for variant in product_data.variants
+                if variant.sku
+            ]
+        )
+
+        for product_index, product_data in enumerate(products_data):
+            cleaned_input = cls.clean_product_input(
+                info,
+                product_data,
+                channel_global_id_to_instance_map,
+                warehouse_global_id_to_instance_map,
+                duplicated_sku,
+                new_slugs,
+                product_index,
+                index_error_map,
+            )
+            cleaned_inputs_map[product_index] = cleaned_input
+        return cleaned_inputs_map
 
     @classmethod
     def create_variants(cls, info, product, variants_inputs, index, index_error_map):
@@ -728,23 +750,23 @@ class ProductBulkCreate(BaseMutation):
 
     @classmethod
     def save(cls, info, product_data_with_errors_list):
-        products_to_create: list = []
-        media_to_create: list = []
-        attributes_to_save: list = []
-        listings_to_create: list = []
+        products_to_create = []
+        media_to_create = []
+        attributes_to_save = []
+        listings_to_create = []
+        variants = []
+        variants_input_data = []
+        updated_channels = set()
 
-        variants: list = []
-        variants_input_data: list = []
-        updated_channels: set = set()
-
+        # First pass: Collect data
         for product_data in product_data_with_errors_list:
             product = product_data["instance"]
+            cleaned_input = product_data["cleaned_input"]
 
             if not product:
                 continue
 
             products_to_create.append(product)
-            cleaned_input = product_data["cleaned_input"]
 
             if media_inputs := cleaned_input.get("media"):
                 cls.prepare_media(info, product, media_inputs, media_to_create)
@@ -763,9 +785,24 @@ class ProductBulkCreate(BaseMutation):
             if variants_data := cleaned_input.pop("variants", None):
                 variants_input_data.extend(variants_data)
 
-        models.Product.objects.bulk_create(products_to_create)
-        models.ProductMedia.objects.bulk_create(media_to_create)
-        models.ProductChannelListing.objects.bulk_create(listings_to_create)
+            # Store categories separately for later
+            product_data["categories"] = cleaned_input.get("categories", [])
+
+        # Save products first
+        saved_products = models.Product.objects.bulk_create(products_to_create)
+
+        # Now update the many-to-many relationships for saved products
+        for product, product_data in zip(saved_products, product_data_with_errors_list):
+            categories = product_data.get("categories", [])
+            if categories:
+                product.categories.set(categories)
+
+        # Handle other related data
+        if media_to_create:
+            models.ProductMedia.objects.bulk_create(media_to_create)
+
+        if listings_to_create:
+            models.ProductChannelListing.objects.bulk_create(listings_to_create)
 
         for product, attributes in attributes_to_save:
             ProductAttributeAssignmentMixin.save(product, attributes)

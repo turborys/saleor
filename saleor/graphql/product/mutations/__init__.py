@@ -11,10 +11,12 @@ from .product import (
     ProductCreate,
     ProductDelete,
     ProductMediaCreate,
+    ProductMediaBulkCreateOrUpdate,
     ProductMediaDelete,
     ProductMediaReorder,
     ProductMediaUpdate,
     ProductUpdate,
+    ProductBulkUpdate,
 )
 from .product_type import ProductTypeCreate, ProductTypeDelete, ProductTypeUpdate
 from .product_variant import (
@@ -25,6 +27,7 @@ from .product_variant import (
     ProductVariantSetDefault,
     ProductVariantUpdate,
     VariantMediaAssign,
+    VariantMediaBulkAssign,
     VariantMediaUnassign,
 )
 
@@ -44,10 +47,12 @@ __all__ = [
     "ProductCreate",
     "ProductDelete",
     "ProductMediaCreate",
+    "ProductMediaBulkCreateOrUpdate",
     "ProductMediaDelete",
     "ProductMediaReorder",
     "ProductMediaUpdate",
     "ProductUpdate",
+    "ProductBulkUpdate",
     "ProductVariantCreate",
     "ProductVariantDelete",
     "ProductVariantPreorderDeactivate",
@@ -55,5 +60,6 @@ __all__ = [
     "ProductVariantSetDefault",
     "ProductVariantUpdate",
     "VariantMediaAssign",
+    "VariantMediaBulkAssign",
     "VariantMediaUnassign",
 ]

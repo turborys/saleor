@@ -232,7 +232,7 @@ class Product(SeoModel, ModelWithMetadata, ModelWithExternalReference):
                 opclasses=["gin_trgm_ops"] * 2,
             ),
             models.Index(
-                fields=["category_id", "slug"],
+                fields=["slug"],
             ),
         ]
         indexes.extend(ModelWithMetadata.Meta.indexes)
@@ -337,6 +337,7 @@ class ProductChannelListing(PublishableModel):
 class ProductVariant(SortableModel, ModelWithMetadata, ModelWithExternalReference):
     sku = models.CharField(max_length=255, unique=True, null=True, blank=True)
     name = models.CharField(max_length=255, blank=True)
+    barcode = models.CharField(max_length=25, null=True, blank=True)
     product = models.ForeignKey(
         Product, related_name="variants", on_delete=models.CASCADE
     )

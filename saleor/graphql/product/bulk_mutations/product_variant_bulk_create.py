@@ -4,6 +4,7 @@ from typing import cast
 import graphene
 from babel.core import get_global
 from django.core.exceptions import ValidationError
+from django.db import transaction, IntegrityError
 from django.db.models import F
 from graphene.utils.str_converters import to_camel_case
 
@@ -199,6 +200,10 @@ class BulkAttributeValueInput(BaseInputObjectType):
 
 
 class ProductVariantBulkCreateInput(ProductVariantInput):
+    product_slug = graphene.String(
+        description="Slug of the product for this variant.",
+        required=False,
+    )
     attributes = NonNullList(
         BulkAttributeValueInput,
         required=True,
@@ -989,3 +994,704 @@ class ProductVariantBulkCreate(BaseMutation):
             if errors
             else None,
         )
+
+
+class ProductVariantBulkCreateOrUpdate(BaseMutation):
+    count = graphene.Int(
+        required=True,
+        default_value=0,
+        description="Returns how many objects were created or updated.",
+    )
+    product_variants = NonNullList(
+        ProductVariant,
+        required=True,
+        default_value=[],
+        description="List of the created or updated variants.",
+    )
+    results = NonNullList(
+        ProductVariantBulkResult,
+        required=True,
+        default_value=[],
+        description="List of the created or updated variants with details.",
+    )
+
+    class Arguments:
+        variants = NonNullList(
+            ProductVariantBulkCreateInput,
+            required=True,
+            description="Input list of product variants to create or update.",
+        )
+        error_policy = ErrorPolicyEnum(
+            required=False,
+            description=(
+                "Policies of error handling. DEFAULT: "
+                + ErrorPolicyEnum.REJECT_EVERYTHING.name
+            ),
+        )
+
+    class Meta:
+        description = "Creates or updates product variants for a given product."
+        doc_category = DOC_CATEGORY_PRODUCTS
+        permissions = (ProductPermissions.MANAGE_PRODUCTS,)
+        error_type_class = BulkProductError
+        error_type_field = "bulk_product_errors"
+        support_meta_field = True
+        support_private_meta_field = True
+
+    @classmethod
+    def clean_prices(
+        cls,
+        price,
+        cost_price,
+        currency_code,
+        channel_id,
+        variant_index,
+        listing_index,
+        errors,
+        index_error_map,
+        path_prefix,
+    ):
+        clean_price(
+            price,
+            "price",
+            currency_code,
+            channel_id,
+            variant_index,
+            listing_index,
+            errors,
+            index_error_map,
+            path_prefix,
+        )
+        clean_price(
+            cost_price,
+            "cost_price",
+            currency_code,
+            channel_id,
+            variant_index,
+            listing_index,
+            errors,
+            index_error_map,
+            path_prefix,
+        )
+
+    @classmethod
+    def clean_channel_listings(
+        cls,
+        channel_listings,
+        product_channel_global_id_to_instance_map,
+        errors,
+        variant_index,
+        index_error_map,
+        path_prefix="channelListings",
+    ):
+        channel_ids = [
+            channel_listing["channel_id"] for channel_listing in channel_listings
+        ]
+        listings_to_create = []
+
+        duplicates = get_duplicated_values(channel_ids)
+        if duplicates:
+            if errors is not None:
+                errors["channel_listings"] = ValidationError(
+                    message="Duplicated channel ID.",
+                    code=ProductVariantBulkErrorCode.DUPLICATED_INPUT_ITEM.value,
+                    params={"channels": duplicates, "index": variant_index},
+                )
+
+        channels_not_assigned_to_product = [
+            channel_id
+            for channel_id in channel_ids
+            if channel_id not in product_channel_global_id_to_instance_map.keys()
+        ]
+
+        if channels_not_assigned_to_product:
+            code = ProductVariantBulkErrorCode.PRODUCT_NOT_ASSIGNED_TO_CHANNEL.value
+            if errors is not None:
+                errors["channel_id"].append(
+                    ValidationError(
+                        message="Product not available in channels.",
+                        code=code,
+                        params={
+                            "index": variant_index,
+                            "channels": channels_not_assigned_to_product,
+                        },
+                    )
+                )
+
+        for listing_index, channel_listing in enumerate(channel_listings):
+            channel_id = channel_listing["channel_id"]
+            errors_count_before_prices = len(index_error_map[variant_index])
+
+            if channel_id in channels_not_assigned_to_product:
+                code = ProductVariantBulkErrorCode.PRODUCT_NOT_ASSIGNED_TO_CHANNEL.value
+                index_error_map[variant_index].append(
+                    ProductVariantBulkError(
+                        field="channelId",
+                        path=f"{path_prefix}.{listing_index}.channelId",
+                        message="Product not available in channels.",
+                        code=code,
+                        channels=[channel_id],
+                    )
+                )
+                continue
+
+            if channel_id in duplicates:
+                index_error_map[variant_index].append(
+                    ProductVariantBulkError(
+                        field="channelId",
+                        path=f"{path_prefix}.{listing_index}.channelId",
+                        message="Duplicated channel ID.",
+                        code=ProductVariantBulkErrorCode.DUPLICATED_INPUT_ITEM.value,
+                        channels=[channel_id],
+                    )
+                )
+                continue
+
+            channel_listing["channel"] = product_channel_global_id_to_instance_map[
+                channel_id
+            ]
+            price = channel_listing.get("price")
+            cost_price = channel_listing.get("cost_price")
+            currency_code = channel_listing["channel"].currency_code
+
+            cls.clean_prices(
+                price,
+                cost_price,
+                currency_code,
+                channel_id,
+                variant_index,
+                listing_index,
+                errors,
+                index_error_map,
+                path_prefix,
+            )
+
+            if len(index_error_map[variant_index]) > errors_count_before_prices:
+                continue
+
+            listings_to_create.append(channel_listing)
+
+        return listings_to_create
+
+    @classmethod
+    def validate_base_fields(
+        cls, cleaned_input, duplicated_sku, errors, index_error_map, index
+    ):
+        base_fields_errors_count = 0
+        weight = cleaned_input.get("weight")
+        if weight and weight.value < 0:
+            message = "Product variant can't have negative weight."
+            code = ProductVariantBulkErrorCode.INVALID.value
+            index_error_map[index].append(
+                ProductVariantBulkError(
+                    field="weight",
+                    path="weight",
+                    message=message,
+                    code=code,
+                )
+            )
+            if errors is not None:
+                errors["weight"].append(
+                    ValidationError(message, code, params={"index": index})
+                )
+            base_fields_errors_count += 1
+
+        quantity_limit = cleaned_input.get("quantity_limit_per_customer")
+        if quantity_limit is not None and quantity_limit < 1:
+            message = (
+                "Product variant can't have "
+                "quantity_limit_per_customer lower than 1."
+            )
+            code = ProductVariantBulkErrorCode.INVALID.value
+            index_error_map[index].append(
+                ProductVariantBulkError(
+                    field="quantity_limit_per_customer",
+                    path="quantity_limit_per_customer",
+                    message=message,
+                    code=code,
+                )
+            )
+            if errors is not None:
+                errors["quantity_limit_per_customer"].append(
+                    ValidationError(message, code, params={"index": index})
+                )
+            base_fields_errors_count += 1
+
+        sku = cleaned_input.get("sku")
+        if sku is not None and sku in duplicated_sku:
+            message = "Duplicated SKU."
+            code = ProductVariantBulkErrorCode.UNIQUE.value
+            index_error_map[index].append(
+                ProductVariantBulkError(
+                    field="sku", path="sku", message=message, code=code
+                )
+            )
+            if errors is not None:
+                errors["sku"].append(
+                    ValidationError(message, code, params={"index": index})
+                )
+            base_fields_errors_count += 1
+
+        return base_fields_errors_count
+
+    @classmethod
+    def clean_variants(cls, info, variants, errors, index_error_map):
+        cleaned_inputs_map = {}
+
+        warehouse_global_id_to_instance_map = {
+            graphene.Node.to_global_id("Warehouse", warehouse.id): warehouse
+            for warehouse in warehouse_models.Warehouse.objects.all()
+        }
+
+        product_cache = {}
+
+        for index, variant_data in enumerate(variants):
+            product_slug = variant_data.get("product_slug")
+            if not product_slug:
+                raise ValidationError("Product slug must be provided in each variant.")
+
+            if product_slug not in product_cache:
+                try:
+                    product = models.Product.objects.get(slug=product_slug)
+                    product_cache[product_slug] = product
+                except models.Product.DoesNotExist:
+                    raise ValidationError(
+                        f"Product with slug '{product_slug}' does not exist.",
+                        code=ProductVariantBulkErrorCode.NOT_FOUND.value,
+                        params={"index": index})
+
+            product = product_cache[product_slug]
+            product_type = product.product_type
+
+            variant_data["product_type"] = product_type
+
+            product_channel_global_id_to_instance_map = {
+                graphene.Node.to_global_id("Channel",
+                                           listing.channel_id): listing.channel
+                for listing in
+                models.ProductChannelListing.objects.select_related("channel").filter(
+                    product=product.id)
+            }
+
+            variant_attributes = product_type.variant_attributes.annotate(
+                variant_selection=F("attributevariant__variant_selection")
+            )
+            variant_attributes_ids = {
+                graphene.Node.to_global_id("Attribute", variant_attribute.id)
+                for variant_attribute in variant_attributes
+            }
+            variant_attributes_external_refs = {
+                variant_attribute.external_reference
+                for variant_attribute in variant_attributes
+            }
+            used_attribute_values = get_used_variants_attribute_values(product)
+
+            duplicated_sku = get_duplicated_values(
+                [variant.sku for variant in variants if variant.sku])
+
+            cleaned_input = cls.clean_variant(
+                info,
+                variant_data,
+                product_channel_global_id_to_instance_map,
+                warehouse_global_id_to_instance_map,
+                variant_attributes,
+                used_attribute_values,
+                variant_attributes_ids,
+                variant_attributes_external_refs,
+                duplicated_sku,
+                index_error_map,
+                index,
+                errors,
+            )
+            cleaned_input["product"] = product
+            cleaned_inputs_map[index] = cleaned_input
+
+        return cleaned_inputs_map
+
+    @classmethod
+    def clean_attributes(
+        cls,
+        cleaned_input,
+        product_type,
+        variant_attributes,
+        variant_attributes_ids,
+        variant_attributes_external_refs,
+        used_attribute_values,
+        errors,
+        variant_index,
+        index_error_map,
+    ):
+        attributes_errors_count = 0
+        if attributes_input := cleaned_input.get("attributes"):
+            attributes_ids = {
+                attr["id"] for attr in attributes_input if attr.get("id") or []
+            }
+            attrs_external_refs = {
+                attr["external_reference"]
+                for attr in attributes_input
+                if attr.get("external_reference") or []
+            }
+            invalid_attributes = attributes_ids - variant_attributes_ids
+            invalid_attributes |= attrs_external_refs - variant_attributes_external_refs
+
+            if len(invalid_attributes) > 0:
+                message = "Given attributes are not a variant attributes."
+                code = ProductVariantBulkErrorCode.ATTRIBUTE_CANNOT_BE_ASSIGNED.value
+                index_error_map[variant_index].append(
+                    ProductVariantBulkError(
+                        field="attributes",
+                        path="attributes",
+                        message=message,
+                        code=code,
+                        attributes=invalid_attributes,
+                    )
+                )
+                if errors is not None:
+                    errors["attributes"].append(
+                        ValidationError(
+                            message,
+                            code=code,
+                            params={
+                                "attributes": invalid_attributes,
+                                "index": variant_index,
+                            },
+                        )
+                    )
+                attributes_errors_count += 1
+
+            if product_type.has_variants:
+                try:
+                    cleaned_attributes = AttributeAssignmentMixin.clean_input(
+                        attributes_input, variant_attributes
+                    )
+                    cleaned_input["attributes"] = cleaned_attributes
+                except ValidationError as exc:
+                    for error in exc.error_list:
+                        attributes = (
+                            error.params.get("attributes") if error.params else None
+                        )
+                        index_error_map[variant_index].append(
+                            ProductVariantBulkError(
+                                field="attributes",
+                                path="attributes",
+                                message=error.message,
+                                code=error.code,
+                                attributes=attributes,
+                            )
+                        )
+                    if errors is not None:
+                        exc.params = {"index": variant_index}
+                        errors["attributes"].append(exc)
+                    attributes_errors_count += 1
+            else:
+                message = "Cannot assign attributes for product type without variants"
+                index_error_map[variant_index].append(
+                    ProductVariantBulkError(
+                        field="attributes",
+                        path="attributes",
+                        message=message,
+                        code=ProductVariantBulkErrorCode.INVALID.value,
+                        attributes=invalid_attributes,
+                    )
+                )
+                if errors is not None:
+                    errors["attributes"].append(
+                        ValidationError(
+                            message,
+                            code=ProductVariantBulkErrorCode.INVALID.value,
+                            params={
+                                "attributes": invalid_attributes,
+                                "index": variant_index,
+                            },
+                        )
+                    )
+                attributes_errors_count += 1
+        return attributes_errors_count
+
+    @classmethod
+    def clean_variant(
+        cls,
+        info,
+        variant_data,
+        product_channel_global_id_to_instance_map,
+        warehouse_global_id_to_instance_map,
+        variant_attributes,
+        used_attribute_values,
+        variant_attributes_ids,
+        variant_attributes_external_refs,
+        duplicated_sku,
+        index_error_map,
+        index,
+        errors,
+    ):
+        cleaned_input = ModelMutation.clean_input(
+            info, None, variant_data, input_cls=ProductVariantBulkCreateInput
+        )
+
+        sku = cleaned_input.get("sku")
+        if sku is not None:
+            cleaned_input["sku"] = clean_variant_sku(sku)
+
+        preorder_settings = cleaned_input.get("preorder")
+        if preorder_settings:
+            cleaned_input["is_preorder"] = True
+            cleaned_input["preorder_global_threshold"] = preorder_settings.get(
+                "global_threshold"
+            )
+            cleaned_input["preorder_end_date"] = preorder_settings.get("end_date")
+
+        base_fields_errors_count = cls.validate_base_fields(
+            cleaned_input, duplicated_sku, errors, index_error_map, index
+        )
+
+        attributes_errors_count = cls.clean_attributes(
+            cleaned_input,
+            variant_data["product_type"],
+            variant_attributes,
+            variant_attributes_ids,
+            variant_attributes_external_refs,
+            used_attribute_values,
+            errors,
+            index,
+            index_error_map,
+        )
+
+        if listings_data := cleaned_input.get("channel_listings"):
+            cleaned_input["channel_listings"] = cls.clean_channel_listings(
+                listings_data,
+                product_channel_global_id_to_instance_map,
+                errors,
+                index,
+                index_error_map,
+            )
+
+        if stocks_data := cleaned_input.get("stocks"):
+            cleaned_input["stocks"] = cls.clean_stocks(
+                stocks_data,
+                warehouse_global_id_to_instance_map,
+                errors,
+                index,
+                index_error_map,
+            )
+
+        if base_fields_errors_count > 0 or attributes_errors_count > 0:
+            return None
+
+        return cleaned_input if cleaned_input else None
+
+    @classmethod
+    def perform_mutation(cls, _root, info, **data):
+
+        variants_data = data.get("variants")
+        print(f"variant _data mutation {variants_data}")
+        if not variants_data:
+            raise ValidationError("No variants data provided.")
+
+        error_policy = data.get("error_policy", ErrorPolicyEnum.REJECT_EVERYTHING.value)
+        errors = defaultdict(list)
+        index_error_map = defaultdict(list)
+
+        cleaned_inputs_map = cls.clean_variants(info, variants_data, errors,
+                                                index_error_map)
+        instances_data_with_errors_list = []
+        variants_to_create = []
+        variants_to_update = []
+
+        for index, cleaned_input in cleaned_inputs_map.items():
+            if not cleaned_input:
+                instances_data_with_errors_list.append(
+                    {"instance": None, "errors": index_error_map[index]}
+                )
+                continue
+
+            product = cleaned_input.get("product")
+            sku = cleaned_input.get("sku")
+            existing_variants = {v.sku: v for v in
+                                 models.ProductVariant.objects.filter(product=product)}
+
+            if sku in existing_variants:
+                instance = existing_variants[sku]
+                cls.construct_instance(instance, cleaned_input)
+                variants_to_update.append(instance)
+            else:
+                instance = models.ProductVariant(product=product)
+                cls.construct_instance(instance, cleaned_input)
+                variants_to_create.append(instance)
+
+            instances_data_with_errors_list.append(
+                {
+                    "instance": instance,
+                    "errors": index_error_map[index],
+                    "cleaned_input": cleaned_input,
+                }
+            )
+
+        if errors:
+            if error_policy == ErrorPolicyEnum.REJECT_EVERYTHING.value:
+                results = get_results(instances_data_with_errors_list, True)
+                return ProductVariantBulkCreateOrUpdate(
+                    count=0,
+                    results=results,
+                    errors=validation_error_to_error_type(
+                        ValidationError(errors), cls._meta.error_type_class
+                    ),
+                )
+
+            if error_policy == ErrorPolicyEnum.REJECT_FAILED_ROWS.value:
+                for data in instances_data_with_errors_list:
+                    if data["errors"] and data["instance"]:
+                        data["instance"] = None
+
+        with transaction.atomic():
+            if variants_to_create:
+                models.ProductVariant.objects.bulk_create(variants_to_create)
+            if variants_to_update:
+                models.ProductVariant.objects.bulk_update(
+                    variants_to_update,
+                    ['sku', 'name', 'barcode', 'track_inventory']
+                )
+
+        saved_variants = cls.save_variants(info, instances_data_with_errors_list,
+                                           product)
+        return ProductVariantBulkCreateOrUpdate(
+            count=len(saved_variants),
+            product_variants=saved_variants,
+            results=get_results(instances_data_with_errors_list, False),
+        )
+
+    @classmethod
+    def save_variants(cls, info, variants_data_with_errors_list, product):
+        variants_to_create = []
+        stocks_to_create = []
+        listings_to_update_or_create = []
+        attributes_to_save = []
+
+        for variant_data in variants_data_with_errors_list:
+            variant = variant_data["instance"]
+            if not variant:
+                continue
+
+            track_inventory_by_default = get_track_inventory_by_default(info)
+            track_inventory = variant_data["cleaned_input"].get("track_inventory")
+            if track_inventory_by_default is not None:
+                variant.track_inventory = (
+                    track_inventory_by_default
+                    if track_inventory is None
+                    else track_inventory
+                )
+            variants_to_create.append(variant)
+            cleaned_input = variant_data["cleaned_input"]
+
+            if stocks_input := cleaned_input.get("stocks"):
+                cls.prepare_stocks(variant, stocks_input, stocks_to_create)
+
+            if listings_input := cleaned_input.get("channel_listings"):
+                # Prepare the listings to update or create
+                cls.prepare_channel_listings(
+                    variant,
+                    listings_input,
+                    listings_to_update_or_create
+                )
+
+            if attributes := cleaned_input.get("attributes"):
+                attributes_to_save.append((variant, attributes))
+
+            if not variant.name:
+                cls.set_variant_name(variant, cleaned_input)
+
+        # Bulk create or update variants
+        models.ProductVariant.objects.bulk_update(
+            [v for v in variants_to_create if v.pk],
+            ['name', 'sku', 'track_inventory', 'barcode']
+        )
+        models.ProductVariant.objects.bulk_create(
+            [v for v in variants_to_create if not v.pk]
+        )
+
+        # Update or create channel listings
+        cls.update_or_create_channel_listings(
+            variants_to_create,
+            listings_to_update_or_create
+        )
+
+        # Save attributes and stocks
+        for variant, attributes in attributes_to_save:
+            AttributeAssignmentMixin.save(variant, attributes)
+
+        warehouse_models.Stock.objects.bulk_create(stocks_to_create)
+
+        if product and not product.default_variant and variants_to_create:
+            if not models.Product.objects.filter(
+                default_variant=variants_to_create[0]
+            ).exclude(pk=product.pk).exists():
+                product.default_variant = variants_to_create[0]
+                product.save(update_fields=["default_variant", "updated_at"])
+
+        return variants_to_create
+
+    @classmethod
+    def update_or_create_channel_listings(cls, variants, listings_data):
+        # Prepare to update or create listings
+        channel_listings_to_update = []
+        channel_listings_to_create = []
+
+        # Collect all existing channel listings for these variants
+        existing_listings = models.ProductVariantChannelListing.objects.filter(
+            variant__in=variants
+        )
+        existing_listings_map = {
+            (listing.variant_id, listing.channel_id): listing
+            for listing in existing_listings
+        }
+
+        for listing_data in listings_data:
+            variant = listing_data["variant"]
+            channel = listing_data["channel"]
+            price = listing_data["price"]
+            cost_price = listing_data.get("cost_price")
+            preorder_threshold = listing_data.get("preorder_threshold")
+
+            # Check if the listing already exists
+            key = (variant.id, channel.id)
+            if key in existing_listings_map:
+                existing_listing = existing_listings_map[key]
+                existing_listing.price_amount = price
+                existing_listing.discounted_price_amount = price
+                existing_listing.cost_price_amount = cost_price
+                existing_listing.preorder_quantity_threshold = preorder_threshold
+                channel_listings_to_update.append(existing_listing)
+            else:
+                # Create new listing
+                new_listing = models.ProductVariantChannelListing(
+                    channel=channel,
+                    variant=variant,
+                    price_amount=price,
+                    discounted_price_amount=price,
+                    cost_price_amount=cost_price,
+                    currency=channel.currency_code,
+                    preorder_quantity_threshold=preorder_threshold
+                )
+                channel_listings_to_create.append(new_listing)
+
+        # Bulk update and create channel listings
+        models.ProductVariantChannelListing.objects.bulk_update(
+            channel_listings_to_update,
+            ['price_amount', 'discounted_price_amount', 'cost_price_amount',
+             'preorder_quantity_threshold']
+        )
+        models.ProductVariantChannelListing.objects.bulk_create(
+            channel_listings_to_create
+        )
+
+    @classmethod
+    def prepare_channel_listings(cls, variant, listings_input, listings_to_create):
+        for listing_data in listings_input:
+            listings_to_create.append(
+                {
+                    "channel": listing_data["channel"],
+                    "variant": variant,
+                    "price": listing_data["price"],
+                    "cost_price": listing_data.get("cost_price"),
+                    "preorder_threshold": listing_data.get("preorder_threshold")
+                }
+            )

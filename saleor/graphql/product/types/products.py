@@ -275,6 +275,10 @@ class ProductVariant(ChannelContextTypeWithMetadata[models.ProductVariant]):
     sku = graphene.String(
         description="The SKU (stock keeping unit) of the product variant."
     )
+    barcode = graphene.String(
+        description="The Barcode of the product variant.",
+        required=False
+    )
     product = graphene.Field(
         lambda: Product,
         required=True,
@@ -439,7 +443,8 @@ class ProductVariant(ChannelContextTypeWithMetadata[models.ProductVariant]):
             country_code = address.country
         channle_slug = root.channel_slug
         if channle_slug or country_code:
-            return StocksWithAvailableQuantityByProductVariantIdCountryCodeAndChannelLoader(  # noqa: E501
+            return StocksWithAvailableQuantityByProductVariantIdCountryCodeAndChannelLoader(
+                # noqa: E501
                 info.context
             ).load((root.node.id, country_code, root.channel_slug))
         else:
@@ -1085,11 +1090,20 @@ class Product(ChannelContextTypeWithMetadata[models.Product]):
                 return None
 
             image = product_media[0]
+
+            # Check for external_url first
+            if image.external_url:
+                return Image(alt=image.alt, url=image.external_url)
+
+            # Check oEmbed data for thumbnail_url
             oembed_data = image.oembed_data
 
             if oembed_data.get("thumbnail_url"):
-                return Image(alt=oembed_data["title"], url=oembed_data["thumbnail_url"])
+                thumbnail_url = oembed_data["thumbnail_url"]
+                return Image(alt=oembed_data.get("title", "No title"),
+                             url=thumbnail_url)
 
+            # Fallback to generated URL
             def _resolve_url(thumbnail):
                 url = get_image_or_proxy_url(
                     thumbnail, image.id, "ProductMedia", size, format
@@ -1414,24 +1428,22 @@ class Product(ChannelContextTypeWithMetadata[models.Product]):
         has_required_permissions = has_one_of_permissions(
             requestor, ALL_PRODUCTS_PERMISSIONS
         )
-        if has_required_permissions and not root.channel_slug:
-            variants = ProductVariantsByProductIdLoader(info.context).load(root.node.id)
-        elif has_required_permissions and root.channel_slug:
-            variants = ProductVariantsByProductIdAndChannel(info.context).load(
-                (root.node.id, root.channel_slug)
-            )
-        else:
-            variants = AvailableProductVariantsByProductIdAndChannel(info.context).load(
-                (root.node.id, root.channel_slug)
-            )
+
+        def load_variants():
+            if has_required_permissions and root.channel_slug:
+                return ProductVariantsByProductIdAndChannel(info.context).load(
+                    (root.node.id, root.channel_slug))
+            elif has_required_permissions:
+                return ProductVariantsByProductIdLoader(info.context).load(root.node.id)
+            else:
+                return AvailableProductVariantsByProductIdAndChannel(info.context).load(
+                    (root.node.id, root.channel_slug))
 
         def map_channel_context(variants):
-            return [
-                ChannelContext(node=variant, channel_slug=root.channel_slug)
-                for variant in variants
-            ]
+            return [ChannelContext(node=variant, channel_slug=root.channel_slug) for
+                    variant in variants]
 
-        return variants.then(map_channel_context)
+        return load_variants().then(map_channel_context)
 
     @staticmethod
     def resolve_channel_listings(root: ChannelContext[models.Product], info):
